@@ -50,6 +50,15 @@ type Run = {
   createdAt: string;
 };
 
+type Rejection = {
+  id: string;
+  topic: string;
+  decision: string;
+  reason: string | null;
+  sourceUrls: string[];
+  discoveredAt: string;
+};
+
 type Feed = {
   success: boolean;
   agent?: {
@@ -66,6 +75,7 @@ type Feed = {
   };
   posts?: Post[];
   history?: Run[];
+  editorialRejections?: Rejection[];
   error?: string;
 };
 
@@ -113,6 +123,7 @@ function Dashboard() {
   const agent = data?.agent;
   const posts = data?.posts ?? [];
   const history = data?.history ?? [];
+  const rejections = data?.editorialRejections ?? [];
 
   return (
     <main className="min-h-screen bg-background">
@@ -282,7 +293,11 @@ function Dashboard() {
                 <li key={run.id} className="flex gap-3 text-sm">
                   <span
                     className={`mt-1.5 size-2 shrink-0 rounded-full ${
-                      run.status === "published" ? "bg-primary" : "bg-destructive"
+                      run.status === "published"
+                        ? "bg-primary"
+                        : run.status === "failed"
+                          ? "bg-destructive"
+                          : "bg-muted-foreground"
                     }`}
                   />
                   <div className="min-w-0">
@@ -296,6 +311,23 @@ function Dashboard() {
               ))}
               {history.length === 0 && (
                 <li className="text-sm text-muted-foreground">No cycles recorded yet.</li>
+              )}
+            </ul>
+          </Card>
+
+          <Card className="border-border/60 bg-card/70 p-5 shadow-card">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+              Editorial rejections
+            </h2>
+            <ul className="mt-3 space-y-3">
+              {rejections.slice(0, 8).map((r) => (
+                <li key={r.id} className="text-sm">
+                  <p className="line-clamp-2 text-foreground/90">{r.topic}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{r.reason}</p>
+                </li>
+              ))}
+              {rejections.length === 0 && (
+                <li className="text-sm text-muted-foreground">Nothing rejected yet.</li>
               )}
             </ul>
           </Card>
