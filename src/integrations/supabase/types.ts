@@ -14,7 +14,155 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      agent_runs: {
+        Row: {
+          agent_id: string
+          created_at: string
+          duration_ms: number | null
+          id: string
+          notes: string | null
+          post_id: string | null
+          status: string
+          trigger: string
+        }
+        Insert: {
+          agent_id: string
+          created_at?: string
+          duration_ms?: number | null
+          id?: string
+          notes?: string | null
+          post_id?: string | null
+          status: string
+          trigger?: string
+        }
+        Update: {
+          agent_id?: string
+          created_at?: string
+          duration_ms?: number | null
+          id?: string
+          notes?: string | null
+          post_id?: string | null
+          status?: string
+          trigger?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agent_runs_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agent_runs_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      agents: {
+        Row: {
+          autonomous: boolean
+          config: Json
+          created_at: string
+          domain: string
+          id: string
+          interval_seconds: number
+          last_run_at: string | null
+          name: string
+          next_run_at: string
+          persona: string
+          run_count: number
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          autonomous?: boolean
+          config?: Json
+          created_at?: string
+          domain: string
+          id?: string
+          interval_seconds?: number
+          last_run_at?: string | null
+          name: string
+          next_run_at?: string
+          persona?: string
+          run_count?: number
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          autonomous?: boolean
+          config?: Json
+          created_at?: string
+          domain?: string
+          id?: string
+          interval_seconds?: number
+          last_run_at?: string | null
+          name?: string
+          next_run_at?: string
+          persona?: string
+          run_count?: number
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      posts: {
+        Row: {
+          agent_id: string
+          content: string
+          created_at: string
+          generation: number
+          id: string
+          model: string | null
+          rationale: string
+          sources: Json
+          summary: string | null
+          tags: Json
+          title: string
+          topic: string | null
+        }
+        Insert: {
+          agent_id: string
+          content: string
+          created_at?: string
+          generation?: number
+          id?: string
+          model?: string | null
+          rationale?: string
+          sources?: Json
+          summary?: string | null
+          tags?: Json
+          title: string
+          topic?: string | null
+        }
+        Update: {
+          agent_id?: string
+          content?: string
+          created_at?: string
+          generation?: number
+          id?: string
+          model?: string | null
+          rationale?: string
+          sources?: Json
+          summary?: string | null
+          tags?: Json
+          title?: string
+          topic?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "posts_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
