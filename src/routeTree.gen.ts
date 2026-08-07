@@ -10,33 +10,102 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiAgentFeedRouteImport } from './routes/api/agent/feed'
+import { Route as ApiAgentInitRouteImport } from './routes/api/agent/init'
+import { Route as ApiPublicAgentFeedRouteImport } from './routes/api/public/agent/feed'
+import { Route as ApiPublicAgentInitRouteImport } from './routes/api/public/agent/init'
+import { Route as ApiPublicHooksAgentTickRouteImport } from './routes/api/public/hooks/agent-tick'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiAgentFeedRoute = ApiAgentFeedRouteImport.update({
+  id: '/api/agent/feed',
+  path: '/api/agent/feed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAgentInitRoute = ApiAgentInitRouteImport.update({
+  id: '/api/agent/init',
+  path: '/api/agent/init',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicAgentFeedRoute = ApiPublicAgentFeedRouteImport.update({
+  id: '/api/public/agent/feed',
+  path: '/api/public/agent/feed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicAgentInitRoute = ApiPublicAgentInitRouteImport.update({
+  id: '/api/public/agent/init',
+  path: '/api/public/agent/init',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiPublicHooksAgentTickRoute = ApiPublicHooksAgentTickRouteImport.update({
+  id: '/api/public/hooks/agent-tick',
+  path: '/api/public/hooks/agent-tick',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/agent/feed': typeof ApiAgentFeedRoute
+  '/api/agent/init': typeof ApiAgentInitRoute
+  '/api/public/agent/feed': typeof ApiPublicAgentFeedRoute
+  '/api/public/agent/init': typeof ApiPublicAgentInitRoute
+  '/api/public/hooks/agent-tick': typeof ApiPublicHooksAgentTickRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/agent/feed': typeof ApiAgentFeedRoute
+  '/api/agent/init': typeof ApiAgentInitRoute
+  '/api/public/agent/feed': typeof ApiPublicAgentFeedRoute
+  '/api/public/agent/init': typeof ApiPublicAgentInitRoute
+  '/api/public/hooks/agent-tick': typeof ApiPublicHooksAgentTickRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/agent/feed': typeof ApiAgentFeedRoute
+  '/api/agent/init': typeof ApiAgentInitRoute
+  '/api/public/agent/feed': typeof ApiPublicAgentFeedRoute
+  '/api/public/agent/init': typeof ApiPublicAgentInitRoute
+  '/api/public/hooks/agent-tick': typeof ApiPublicHooksAgentTickRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/api/agent/feed'
+    | '/api/agent/init'
+    | '/api/public/agent/feed'
+    | '/api/public/agent/init'
+    | '/api/public/hooks/agent-tick'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/api/agent/feed'
+    | '/api/agent/init'
+    | '/api/public/agent/feed'
+    | '/api/public/agent/init'
+    | '/api/public/hooks/agent-tick'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/agent/feed'
+    | '/api/agent/init'
+    | '/api/public/agent/feed'
+    | '/api/public/agent/init'
+    | '/api/public/hooks/agent-tick'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiAgentFeedRoute: typeof ApiAgentFeedRoute
+  ApiAgentInitRoute: typeof ApiAgentInitRoute
+  ApiPublicAgentFeedRoute: typeof ApiPublicAgentFeedRoute
+  ApiPublicAgentInitRoute: typeof ApiPublicAgentInitRoute
+  ApiPublicHooksAgentTickRoute: typeof ApiPublicHooksAgentTickRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,22 +117,52 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/agent/feed': {
+      id: '/api/agent/feed'
+      path: '/api/agent/feed'
+      fullPath: '/api/agent/feed'
+      preLoaderRoute: typeof ApiAgentFeedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/agent/init': {
+      id: '/api/agent/init'
+      path: '/api/agent/init'
+      fullPath: '/api/agent/init'
+      preLoaderRoute: typeof ApiAgentInitRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/agent/feed': {
+      id: '/api/public/agent/feed'
+      path: '/api/public/agent/feed'
+      fullPath: '/api/public/agent/feed'
+      preLoaderRoute: typeof ApiPublicAgentFeedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/agent/init': {
+      id: '/api/public/agent/init'
+      path: '/api/public/agent/init'
+      fullPath: '/api/public/agent/init'
+      preLoaderRoute: typeof ApiPublicAgentInitRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/public/hooks/agent-tick': {
+      id: '/api/public/hooks/agent-tick'
+      path: '/api/public/hooks/agent-tick'
+      fullPath: '/api/public/hooks/agent-tick'
+      preLoaderRoute: typeof ApiPublicHooksAgentTickRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiAgentFeedRoute: ApiAgentFeedRoute,
+  ApiAgentInitRoute: ApiAgentInitRoute,
+  ApiPublicAgentFeedRoute: ApiPublicAgentFeedRoute,
+  ApiPublicAgentInitRoute: ApiPublicAgentInitRoute,
+  ApiPublicHooksAgentTickRoute: ApiPublicHooksAgentTickRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
