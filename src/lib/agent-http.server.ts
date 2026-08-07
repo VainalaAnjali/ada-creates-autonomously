@@ -23,13 +23,12 @@ export async function handleAgentInit(request: Request): Promise<Response> {
         : {}),
     });
 
-    // Publish the first post immediately so the agent is live right after init.
-    if (created) await engine.runAgentOnce(agent, "init");
 
     return json({
       success: true,
       created,
       agentId: agent.id,
+      nextGenerationAt: agent.next_generation_at,
       agent: {
         id: agent.id,
         name: agent.name,
@@ -52,13 +51,11 @@ export async function handleAgentFeed(request: Request): Promise<Response> {
     const agentId = url.searchParams.get("agentId") ?? undefined;
     const limit = Math.min(Number(url.searchParams.get("limit") ?? 20) || 20, 50);
 
-    // Autonomous catch-up: publish anything the schedule says is due.
-    await engine.runDueAgents("feed");
-
+    // Read-only: the feed never triggers generation.
     const feed = await engine.getFeed(agentId, limit);
     if (!feed) return json({ success: false, error: "Agent not found. Call /api/agent/init first." }, 404);
 
-    const { agent, posts, runs } = feed;
+    const { agent, posts, runs, rejected } = feed;
     return json({
       success: true,
       agent: {
@@ -72,6 +69,8 @@ export async function handleAgentFeed(request: Request): Promise<Response> {
         nextRunAt: agent.next_run_at,
         runCount: agent.run_count,
         createdAt: agent.created_at,
+        initializedAt: agent.initialized_at,
+        nextGenerationAt: agent.next_generation_at,
       },
       count: posts.length,
       posts: posts.map((p: Record<string, unknown>) => ({
@@ -85,7 +84,15 @@ export async function handleAgentFeed(request: Request): Promise<Response> {
         topic: p["topic"],
         generation: p["generation"],
         model: p["model"],
-        createdAt: p["created_at"],
+        createdAt: new Date(String(p["created_at"])).toISOString(),
+      })),
+      editorialRejections: rejected.map((r: Record<string, unknown>) => ({
+        id: r["id"],
+        topic: r["topic"],
+        decision: r["editorial_decision"],
+        reason: r["rejection_reason"],
+        sourceUrls: r["source_urls"],
+        discoveredAt: r["discovered_at"],
       })),
       history: runs.map((r: Record<string, unknown>) => ({
         id: r["id"],
