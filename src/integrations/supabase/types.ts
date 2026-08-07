@@ -69,9 +69,11 @@ export type Database = {
           created_at: string
           domain: string
           id: string
+          initialized_at: string
           interval_seconds: number
           last_run_at: string | null
           name: string
+          next_generation_at: string | null
           next_run_at: string
           persona: string
           run_count: number
@@ -84,9 +86,11 @@ export type Database = {
           created_at?: string
           domain: string
           id?: string
+          initialized_at?: string
           interval_seconds?: number
           last_run_at?: string | null
           name: string
+          next_generation_at?: string | null
           next_run_at?: string
           persona?: string
           run_count?: number
@@ -99,9 +103,11 @@ export type Database = {
           created_at?: string
           domain?: string
           id?: string
+          initialized_at?: string
           interval_seconds?: number
           last_run_at?: string | null
           name?: string
+          next_generation_at?: string | null
           next_run_at?: string
           persona?: string
           run_count?: number
@@ -109,6 +115,85 @@ export type Database = {
           updated_at?: string
         }
         Relationships: []
+      }
+      discovered_topics: {
+        Row: {
+          agent_id: string
+          created_at: string
+          discovered_at: string
+          editorial_decision: string
+          id: string
+          rejection_reason: string | null
+          source_urls: Json
+          summary: string | null
+          topic: string
+          updated_at: string
+        }
+        Insert: {
+          agent_id: string
+          created_at?: string
+          discovered_at?: string
+          editorial_decision?: string
+          id?: string
+          rejection_reason?: string | null
+          source_urls?: Json
+          summary?: string | null
+          topic: string
+          updated_at?: string
+        }
+        Update: {
+          agent_id?: string
+          created_at?: string
+          discovered_at?: string
+          editorial_decision?: string
+          id?: string
+          rejection_reason?: string | null
+          source_urls?: Json
+          summary?: string | null
+          topic?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "discovered_topics_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      post_sources: {
+        Row: {
+          created_at: string
+          id: string
+          post_id: string
+          title: string | null
+          url: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          post_id: string
+          title?: string | null
+          url: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          post_id?: string
+          title?: string | null
+          url?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_sources_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "posts"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       posts: {
         Row: {
@@ -122,6 +207,7 @@ export type Database = {
           sources: Json
           summary: string | null
           tags: Json
+          text: string | null
           title: string
           topic: string | null
         }
@@ -136,6 +222,7 @@ export type Database = {
           sources?: Json
           summary?: string | null
           tags?: Json
+          text?: string | null
           title: string
           topic?: string | null
         }
@@ -150,6 +237,7 @@ export type Database = {
           sources?: Json
           summary?: string | null
           tags?: Json
+          text?: string | null
           title?: string
           topic?: string | null
         }
