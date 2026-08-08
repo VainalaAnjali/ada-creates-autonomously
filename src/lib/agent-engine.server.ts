@@ -434,22 +434,26 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
       );
     }
 
-    // 9. MEMORY UPDATE.
+    // 9. MEMORY UPDATE — topic, key facts, decision and rationale go to Breeth.
     const remembered = await breethRemember(`agent:${agent.id}`, {
       topic: generated.topic,
       summary: generated.summary,
-      rationale: generated.rationale,
+      insights: generated.insights.length ? generated.insights : [generated.summary].filter(Boolean),
+      decision: `approved (score ${winner.score})`,
+      rationale: `${winner.reason} — ${generated.rationale}`,
       sources: generated.sources.map((s) => s.url),
       postId: post.id as string,
+      publishedAt: new Date().toISOString(),
     });
 
     await log(
       "published",
-      `Published "${generated.title}" (score ${winner.score}, ${decisions.length - 1} candidates rejected)${
-        breethConfigured() ? (remembered ? ", memory synced" : ", memory sync failed — using database history") : ""
+      `Published "${generated.title}" (score ${winner.score}, ${decisions.length - 1} candidates rejected, memory: ${memorySource})${
+        breethConfigured() ? (remembered ? ", Breeth updated" : ", Breeth write failed — database fallback in use") : ""
       }`,
       post.id as string,
     );
+
     return "published";
   } catch (err) {
     await log("failed", err instanceof Error ? err.message : "Unknown error");
