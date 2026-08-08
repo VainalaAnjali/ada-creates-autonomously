@@ -319,9 +319,16 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
     const publishedTitles = posts.map((p) => p.title);
     const seenTopics = ((recentTopics ?? []) as { topic: string }[]).map((t) => t.topic);
 
-    // Search Breeth for previously published topics and relevant memories.
-    const breethQuery = [agent.domain, ...candidates.slice(0, 8).map((c) => c.topic)].join(" ");
-    const remoteMemory = breethConfigured() ? await breethRecall(`agent:${agent.id}`, breethQuery) : [];
+    // Search Breeth for previously published topics and relevant memories:
+    // one broad query for context plus one targeted query per candidate.
+    const namespace = `agent:${agent.id}`;
+    const broadQuery = [agent.domain, ...candidates.slice(0, 8).map((c) => c.topic)].join(" ");
+    const [broadMemory, perCandidate] = await Promise.all([
+      breethConfigured() ? breethRecall(namespace, broadQuery) : Promise.resolve([] as MemoryItem[]),
+      breethRecallMany(namespace, candidates.map((c) => c.topic)),
+    ]);
+    const remoteMemory: MemoryItem[] = [...broadMemory];
+    for (const list of perCandidate.values()) remoteMemory.push(...list);
     const memorySource = remoteMemory.length ? "breeth" : "database";
 
     const memoryMap = new Map<string, { topic: string; note?: string | null }>();
@@ -342,13 +349,15 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
     const decisions: (Decision & { candidate: Candidate })[] = [];
     const fresh: Candidate[] = [];
     for (const c of candidates) {
-      const dupOf = [...memoryTopics, ...seenTopics].find((m) => similarity(c.topic, m) >= 0.6);
+      const breethHit = memoryCovers(c.topic, [...(perCandidate.get(c.topic) ?? []), ...broadMemory]);
+      const dupOf =
+        breethHit?.topic ?? [...memoryTopics, ...seenTopics].find((m) => similarity(c.topic, m) >= 0.6);
       if (dupOf) {
         decisions.push({
           index: -1,
           score: 0,
           decision: "rejected",
-          reason: `duplicate: already covered or evaluated ("${dupOf.slice(0, 80)}")`,
+          reason: `duplicate: ${breethHit ? "long-term memory (Breeth) shows" : "already covered or evaluated"} ("${dupOf.slice(0, 80)}")`,
           candidate: c,
         });
       } else {
@@ -357,6 +366,7 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
     }
 
     // 4. EDITORIAL JUDGEMENT on what remains.
+
     if (fresh.length) {
       const reviewed = await editorialReview(agent, fresh, memory);
 
