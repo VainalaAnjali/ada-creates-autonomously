@@ -138,23 +138,25 @@ type Decision = {
 async function editorialReview(
   agent: AgentRow,
   candidates: Candidate[],
-  memory: string[],
+  memory: { topic: string; note?: string | null }[],
 ): Promise<Decision[]> {
   const model = (agent.config?.["model"] as string) ?? ADA_CONFIG.model;
   const system = `${agent.persona}\nYou are acting as a strict editor-in-chief for the domain "${agent.domain}". Reply with JSON only.`;
   const user = `Evaluate these candidate topics for publication.
 
-Already covered by Ada (do not repeat these):
-${memory.length ? memory.map((m) => `- ${m}`).join("\n") : "- (nothing yet)"}
+Long-term memory — topics Ada already covered, with what she already said (do not repeat these):
+${memory.length ? memory.map((m) => `- ${m.topic}${m.note ? ` — ${String(m.note).slice(0, 200)}` : ""}`).join("\n") : "- (nothing yet)"}
 
 Candidates:
 ${candidates.map((c, i) => `${i}. ${c.topic}\n   source: ${c.url}\n   notes: ${c.summary.slice(0, 200) || "(none)"}`).join("\n")}
 
 Rejection criteria: ${EDITORIAL_RULES.join("; ")}.
 Be strict: reject anything duplicate, weak-sourced, unoriginal, off-domain, clickbaity or without a meaningful insight.
+A candidate that only restates something in long-term memory MUST be rejected as "duplicate", even if worded differently. Only allow it when it adds a genuinely new development.
 
 Return JSON: {"decisions":[{"index":number,"score":0-100,"decision":"approved"|"rejected","reason":"one short sentence, starting with the criterion key when rejected"}]}
 Every candidate must appear exactly once.`;
+
 
   const raw = await callAI(model, system, user);
   const parsed = JSON.parse(raw) as { decisions?: Decision[] };
