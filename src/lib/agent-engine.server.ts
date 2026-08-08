@@ -178,8 +178,10 @@ type GeneratedPost = {
   rationale: string;
   topic: string;
   tags: string[];
+  insights: string[];
   sources: { title: string; url: string }[];
 };
+
 
 /** GENERATE + RATIONALE for the selected topic. */
 async function generatePost(
@@ -206,6 +208,7 @@ Return a JSON object with exactly these keys:
 "rationale" (3-4 sentences: why THIS topic was selected over the alternatives, and why it is relevant right now),
 "topic" (short topic label),
 "tags" (array of 3-5 lowercase tags),
+"insights" (array of 2-4 short standalone factual takeaways worth remembering long-term),
 "sources" (array of 2-4 objects with "title" and "url"; the primary source above MUST be included, other URLs must be real and stable).`;
 
   const raw = await callAI(model, system, user);
@@ -229,9 +232,11 @@ Return a JSON object with exactly these keys:
     rationale: String(parsed.rationale ?? reason),
     topic: String(parsed.topic ?? candidate.topic).slice(0, 200),
     tags: Array.isArray(parsed.tags) ? parsed.tags.map(String).slice(0, 6) : [],
+    insights: Array.isArray(parsed.insights) ? parsed.insights.map(String).slice(0, 6) : [],
     sources: sources.slice(0, 5),
   };
 }
+
 
 /** Runs one autonomous cycle for every agent whose schedule is due. */
 export async function runDueAgents(trigger: string) {
