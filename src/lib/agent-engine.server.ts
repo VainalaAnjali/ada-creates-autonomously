@@ -547,11 +547,12 @@ export async function memoryDryRun(seedTopic?: string) {
   }
 
   const candidates = await discoverTopics();
-  const query = [agent.domain, seedTopic ?? "", ...candidates.slice(0, 8).map((c) => c.topic)].join(" ");
-  const remote = await breethRecall(namespace, query);
+  const perCandidate = await breethRecallMany(namespace, candidates.map((c) => c.topic));
+  const remote: MemoryItem[] = [];
+  for (const list of perCandidate.values()) remote.push(...list);
   const duplicates = candidates
     .map((c) => {
-      const hit = remote.find((m) => similarity(c.topic, m.topic) >= 0.6);
+      const hit = memoryCovers(c.topic, perCandidate.get(c.topic) ?? []);
       return hit ? { candidate: c.topic, memory: hit.topic } : null;
     })
     .filter(Boolean);
