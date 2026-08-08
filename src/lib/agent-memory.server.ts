@@ -1,12 +1,14 @@
 /**
- * Long-term memory layer for the autonomous agent.
+ * Long-term memory layer for the autonomous agent (Breeth / cogram-core).
  *
  * Breeth (BREETH_API_URL + BREETH_API_KEY, server-side only) is Ada's
- * persistent long-term memory. The project database stays the operational
- * persistence layer and the fallback whenever Breeth is unreachable.
+ * persistent long-term memory:
+ *   - recall  -> POST /v1/search   (graph facts for a query, scoped by group_id)
+ *   - remember-> POST /v1/episodes (prose episode) + POST /v1/facts (triples)
  *
- * Neither secret is ever imported into client code: this module is a
- * `.server.ts` file and is only reached from server handlers.
+ * The project database remains the operational persistence layer and the
+ * fallback whenever Breeth is unavailable. Neither secret is ever exposed to
+ * the frontend: this is a `.server.ts` module reached only from server code.
  */
 
 export type MemoryItem = {
@@ -40,21 +42,25 @@ export function breethConfigured() {
   return breethConfig() !== null;
 }
 
-async function breethFetch(
+/** Breeth group ids are short labels; derive a stable one per agent. */
+export function memoryGroup(namespace: string): string {
+  const slug = namespace.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `ada-${slug.slice(-24) || "default"}`;
+}
+
+async function breethPost(
   path: string,
   body: unknown,
-  cfg: { url: string; key: string },
-): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
+  timeoutMs = 20_000,
+): Promise<{ ok: boolean; status: number; json: unknown; text: string } | null> {
+  const cfg = breethConfig();
+  if (!cfg) return null;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(`${cfg.url}${path}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${cfg.key}`,
-        "X-API-Key": cfg.key,
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.key}` },
       body: JSON.stringify(body),
       signal: controller.signal,
     });
@@ -63,145 +69,101 @@ async function breethFetch(
     try {
       parsed = text ? JSON.parse(text) : null;
     } catch {
-      /* non-JSON response */
+      /* non-JSON */
     }
+    if (!res.ok) console.error(`Breeth ${path} failed [${res.status}]: ${text.slice(0, 300)}`);
     return { ok: res.ok, status: res.status, json: parsed, text };
+  } catch (err) {
+    console.error(`Breeth ${path} error:`, err instanceof Error ? err.message : err);
+    return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-function normalizeItems(payload: unknown): MemoryItem[] {
-  const root = payload as Record<string, unknown> | null;
-  const rawList =
-    (Array.isArray(root?.["items"]) && root["items"]) ||
-    (Array.isArray(root?.["memories"]) && root["memories"]) ||
-    (Array.isArray(root?.["results"]) && root["results"]) ||
-    (Array.isArray(root?.["data"]) && root["data"]) ||
-    (Array.isArray(payload) ? payload : []);
-
-  return (rawList as Record<string, unknown>[])
-    .map((i) => {
-      const meta = (i?.["metadata"] as Record<string, unknown>) ?? {};
-      const topic =
-        (i?.["topic"] as string) ??
-        (meta["topic"] as string) ??
-        (i?.["title"] as string) ??
-        (typeof i?.["content"] === "string" ? (i["content"] as string).slice(0, 160) : "") ??
-        (typeof i?.["text"] === "string" ? (i["text"] as string).slice(0, 160) : "");
-      const insights = i?.["insights"] ?? meta["insights"];
-      return {
-        topic: String(topic ?? "").trim(),
-        summary: (i?.["summary"] as string) ?? (meta["summary"] as string) ?? null,
-        insights: Array.isArray(insights) ? insights.map(String).slice(0, 8) : [],
-        rationale: (i?.["rationale"] as string) ?? (meta["rationale"] as string) ?? null,
-        createdAt:
-          (i?.["created_at"] as string) ??
-          (i?.["createdAt"] as string) ??
-          (meta["published_at"] as string) ??
-          null,
-        source: "breeth" as const,
-      };
-    })
-    .filter((i) => i.topic.length > 0);
-}
-
 /** Search Breeth for previously published topics and relevant memories. */
 export async function breethRecall(namespace: string, query: string): Promise<MemoryItem[]> {
-  const cfg = breethConfig();
-  if (!cfg) return [];
+  if (!breethConfigured()) return [];
+  const res = await breethPost("/v1/search", {
+    query: query.slice(0, 1000),
+    group_id: memoryGroup(namespace),
+    limit: 25,
+  });
+  if (!res?.ok) return [];
 
-  const payload = { namespace, query, limit: 25, top_k: 25 };
-  for (const path of ["/recall", "/search", "/memories/search", "/v1/memories/search"]) {
-    try {
-      const res = await breethFetch(path, payload, cfg);
-      if (res.ok) {
-        const items = normalizeItems(res.json);
-        if (items.length || path === "/recall") return items;
-        continue;
-      }
-      if (res.status === 404 || res.status === 405) continue; // try next shape
-      console.error(`Breeth recall failed [${res.status}] on ${path}: ${res.text.slice(0, 300)}`);
-      return [];
-    } catch (err) {
-      console.error("Breeth recall error:", err instanceof Error ? err.message : err);
-      return [];
-    }
+  const edges = ((res.json as { edges?: unknown[] } | null)?.edges ?? []) as Record<string, unknown>[];
+  const seen = new Set<string>();
+  const items: MemoryItem[] = [];
+  for (const e of edges) {
+    const fact = String(e?.["fact"] ?? e?.["name"] ?? "").trim();
+    if (!fact || seen.has(fact.toLowerCase())) continue;
+    seen.add(fact.toLowerCase());
+    items.push({ topic: fact, summary: null, insights: [], rationale: null, createdAt: null, source: "breeth" });
   }
-  return [];
+  return items;
 }
 
-/** Persist the published topic, insights, decision and rationale into Breeth. */
+/** Store the published topic, key facts, decision and rationale in Breeth. */
 export async function breethRemember(namespace: string, entry: MemoryEntry): Promise<boolean> {
-  const cfg = breethConfig();
-  if (!cfg) return false;
-
+  if (!breethConfigured()) return false;
+  const group = memoryGroup(namespace);
   const publishedAt = entry.publishedAt ?? new Date().toISOString();
+
   const content = [
-    `Topic: ${entry.topic}`,
+    `On ${publishedAt}, Ada published a post about: ${entry.topic}.`,
     entry.summary ? `Summary: ${entry.summary}` : "",
-    entry.insights?.length ? `Key facts: ${entry.insights.join(" | ")}` : "",
-    entry.decision ? `Editorial decision: ${entry.decision}` : "",
-    entry.rationale ? `Rationale: ${entry.rationale}` : "",
-    entry.sources?.length ? `Sources: ${entry.sources.join(" ")}` : "",
+    entry.insights?.length ? `Key facts and insights: ${entry.insights.join(" ")}` : "",
+    entry.decision ? `Editorial decision: ${entry.decision}.` : "",
+    entry.rationale ? `Publishing rationale: ${entry.rationale}` : "",
+    entry.sources?.length ? `Sources: ${entry.sources.join(" , ")}` : "",
+    entry.postId ? `Post id: ${entry.postId}.` : "",
+    `Ada has already covered this topic and must not repeat it.`,
   ]
     .filter(Boolean)
     .join("\n");
 
-  const payload = {
-    namespace,
-    topic: entry.topic,
-    summary: entry.summary ?? null,
-    insights: entry.insights ?? [],
-    decision: entry.decision ?? "published",
-    rationale: entry.rationale ?? null,
-    sources: entry.sources ?? [],
-    post_id: entry.postId ?? null,
-    published_at: publishedAt,
+  const episode = await breethPost("/v1/episodes", {
     content,
-    text: content,
-    metadata: {
-      topic: entry.topic,
-      summary: entry.summary ?? null,
-      insights: entry.insights ?? [],
-      decision: entry.decision ?? "published",
-      rationale: entry.rationale ?? null,
-      sources: entry.sources ?? [],
-      post_id: entry.postId ?? null,
-      published_at: publishedAt,
-    },
-  };
+    group_id: group,
+    source_description: "ada-autonomous-cycle",
+  });
+  const okEpisode = Boolean(episode?.ok);
 
-  for (const path of ["/remember", "/memories", "/v1/memories", "/store"]) {
-    try {
-      const res = await breethFetch(path, payload, cfg);
-      if (res.ok) return true;
-      if (res.status === 404 || res.status === 405) continue;
-      console.error(`Breeth remember failed [${res.status}] on ${path}: ${res.text.slice(0, 300)}`);
-      return false;
-    } catch (err) {
-      console.error("Breeth remember error:", err instanceof Error ? err.message : err);
-      return false;
-    }
-  }
-  return false;
+  // Explicit triples make duplicate lookups sharp even before narration settles.
+  const triples = [
+    { subject: "Ada", predicate: "already published about", object: entry.topic.slice(0, 240) },
+    ...(entry.decision
+      ? [{ subject: entry.topic.slice(0, 240), predicate: "editorial decision", object: entry.decision.slice(0, 240) }]
+      : []),
+    ...(entry.rationale
+      ? [{ subject: entry.topic.slice(0, 240), predicate: "published because", object: entry.rationale.slice(0, 240) }]
+      : []),
+    ...(entry.insights ?? [])
+      .slice(0, 3)
+      .map((i) => ({ subject: entry.topic.slice(0, 240), predicate: "key insight", object: String(i).slice(0, 240) })),
+  ];
+  await Promise.all(triples.map((t) => breethPost("/v1/facts", { ...t, group_id: group })));
+
+  return okEpisode;
 }
 
 /** Connectivity probe used by the diagnostics endpoint. Never returns secrets. */
 export async function breethHealth(namespace = "diagnostics") {
-  const cfg = breethConfig();
-  if (!cfg) return { configured: false, read: false, write: false, note: "BREETH_API_URL / BREETH_API_KEY not set" };
-  const probe = `breeth connectivity probe ${new Date().toISOString()}`;
+  if (!breethConfigured()) {
+    return { configured: false, read: false, write: false, note: "BREETH_API_URL / BREETH_API_KEY not set" };
+  }
+  const marker = `Breeth connectivity probe ${Date.now()}`;
   const write = await breethRemember(namespace, {
-    topic: probe,
+    topic: marker,
     summary: "Connectivity probe written by Ada's memory layer.",
-    insights: ["probe"],
+    insights: ["Breeth write path is reachable."],
     decision: "probe",
-    rationale: "Verifying Breeth write access.",
+    rationale: "Verifying Breeth read/write access.",
   });
-  const items = await breethRecall(namespace, "breeth connectivity probe");
+  const items = await breethRecall(namespace, marker);
   return {
     configured: true,
+    group: memoryGroup(namespace),
     write,
     read: items.length > 0,
     recalled: items.slice(0, 5).map((i) => i.topic),
@@ -231,4 +193,34 @@ export function similarity(a: string, b: string): number {
   let shared = 0;
   for (const t of ta) if (tb.has(t)) shared += 1;
   return shared / Math.min(ta.size, tb.size);
+}
+
+/**
+ * Targeted recall: one Breeth search per candidate topic, run in parallel.
+ * This is what makes memory from an earlier cycle actually bite on a later one.
+ */
+export async function breethRecallMany(
+  namespace: string,
+  queries: string[],
+): Promise<Map<string, MemoryItem[]>> {
+  const out = new Map<string, MemoryItem[]>();
+  if (!breethConfigured()) return out;
+  const unique = [...new Set(queries.filter(Boolean))].slice(0, 12);
+  const results = await Promise.all(unique.map((q) => breethRecall(namespace, q)));
+  unique.forEach((q, i) => out.set(q, results[i] ?? []));
+  return out;
+}
+
+/** True when a Breeth memory clearly covers this topic already. */
+export function memoryCovers(topic: string, memories: MemoryItem[]): MemoryItem | null {
+  const t = tokenize(topic);
+  if (!t.size) return null;
+  for (const m of memories) {
+    if (similarity(topic, m.topic) >= 0.6) return m;
+    const mt = tokenize(m.topic);
+    let shared = 0;
+    for (const w of t) if (mt.has(w)) shared += 1;
+    if (t.size >= 3 && shared / t.size >= 0.7) return m; // memory restates the topic
+  }
+  return null;
 }

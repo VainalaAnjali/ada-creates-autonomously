@@ -3,9 +3,13 @@ import { discoverTopics, type Candidate } from "./agent-discovery.server";
 import {
   breethConfigured,
   breethRecall,
+  breethRecallMany,
   breethRemember,
+  memoryCovers,
   similarity,
+  type MemoryItem,
 } from "./agent-memory.server";
+
 
 export const ADA_CONFIG = {
   name: "Ada",
@@ -315,9 +319,16 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
     const publishedTitles = posts.map((p) => p.title);
     const seenTopics = ((recentTopics ?? []) as { topic: string }[]).map((t) => t.topic);
 
-    // Search Breeth for previously published topics and relevant memories.
-    const breethQuery = [agent.domain, ...candidates.slice(0, 8).map((c) => c.topic)].join(" ");
-    const remoteMemory = breethConfigured() ? await breethRecall(`agent:${agent.id}`, breethQuery) : [];
+    // Search Breeth for previously published topics and relevant memories:
+    // one broad query for context plus one targeted query per candidate.
+    const namespace = `agent:${agent.id}`;
+    const broadQuery = [agent.domain, ...candidates.slice(0, 8).map((c) => c.topic)].join(" ");
+    const [broadMemory, perCandidate] = await Promise.all([
+      breethConfigured() ? breethRecall(namespace, broadQuery) : Promise.resolve([] as MemoryItem[]),
+      breethRecallMany(namespace, candidates.map((c) => c.topic)),
+    ]);
+    const remoteMemory: MemoryItem[] = [...broadMemory];
+    for (const list of perCandidate.values()) remoteMemory.push(...list);
     const memorySource = remoteMemory.length ? "breeth" : "database";
 
     const memoryMap = new Map<string, { topic: string; note?: string | null }>();
@@ -338,13 +349,15 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
     const decisions: (Decision & { candidate: Candidate })[] = [];
     const fresh: Candidate[] = [];
     for (const c of candidates) {
-      const dupOf = [...memoryTopics, ...seenTopics].find((m) => similarity(c.topic, m) >= 0.6);
+      const breethHit = memoryCovers(c.topic, [...(perCandidate.get(c.topic) ?? []), ...broadMemory]);
+      const dupOf =
+        breethHit?.topic ?? [...memoryTopics, ...seenTopics].find((m) => similarity(c.topic, m) >= 0.6);
       if (dupOf) {
         decisions.push({
           index: -1,
           score: 0,
           decision: "rejected",
-          reason: `duplicate: already covered or evaluated ("${dupOf.slice(0, 80)}")`,
+          reason: `duplicate: ${breethHit ? "long-term memory (Breeth) shows" : "already covered or evaluated"} ("${dupOf.slice(0, 80)}")`,
           candidate: c,
         });
       } else {
@@ -353,6 +366,7 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
     }
 
     // 4. EDITORIAL JUDGEMENT on what remains.
+
     if (fresh.length) {
       const reviewed = await editorialReview(agent, fresh, memory);
 
@@ -504,4 +518,52 @@ export async function getFeed(agentId?: string, limit = 20) {
   ]);
 
   return { agent, posts: posts ?? [], runs: runs ?? [], rejected: rejected ?? [] };
+}
+
+/**
+ * Diagnostics only: exercises DISCOVER -> BREETH RECALL -> duplicate screening
+ * without calling the AI or writing anything. Never affects the scheduler.
+ */
+export async function memoryDryRun(seedTopic?: string) {
+  const db = getServiceClient();
+  const { data: agentRow } = await db
+    .from("agents")
+    .select("*")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  const agent = agentRow as AgentRow | null;
+  if (!agent) return { error: "no agent" };
+
+  const namespace = `agent:${agent.id}`;
+  if (seedTopic) {
+    await breethRemember(namespace, {
+      topic: seedTopic,
+      summary: `Ada already published about ${seedTopic}.`,
+      insights: [`${seedTopic} was covered in an earlier autonomous cycle.`],
+      decision: "approved (seeded diagnostic)",
+      rationale: "Seeded to verify that memory from one cycle influences a later cycle.",
+    });
+  }
+
+  const candidates = await discoverTopics();
+  const perCandidate = await breethRecallMany(namespace, candidates.map((c) => c.topic));
+  const remote: MemoryItem[] = [];
+  for (const list of perCandidate.values()) remote.push(...list);
+  const duplicates = candidates
+    .map((c) => {
+      const hit = memoryCovers(c.topic, perCandidate.get(c.topic) ?? []);
+      return hit ? { candidate: c.topic, memory: hit.topic } : null;
+    })
+    .filter(Boolean);
+
+  return {
+    agentId: agent.id,
+    breethConfigured: breethConfigured(),
+    candidates: candidates.length,
+    candidateSample: candidates.slice(0, 5).map((c) => c.topic),
+    memoriesRecalled: remote.length,
+    memorySample: remote.slice(0, 8).map((m) => m.topic),
+    duplicatesBlockedByMemory: duplicates,
+  };
 }
