@@ -294,11 +294,11 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
     // 1. DISCOVER — live sources only. A failure here must never fabricate a post.
     const candidates = await discoverTopics();
 
-    // 2. MEMORY — database history is authoritative, Breeth is best-effort.
+    // 2. MEMORY — Breeth is the long-term memory, the database is authoritative fallback.
     const [{ data: recentPosts }, { data: recentTopics }] = await Promise.all([
       db
         .from("posts")
-        .select("title, topic, created_at")
+        .select("title, topic, summary, created_at")
         .eq("agent_id", agent.id)
         .order("created_at", { ascending: false })
         .limit(20),
@@ -310,21 +310,35 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
         .limit(60),
     ]);
 
-    const publishedTitles = ((recentPosts ?? []) as { title: string; topic: string | null }[]).map(
-      (p) => p.title,
-    );
-    const publishedTopics = ((recentPosts ?? []) as { title: string; topic: string | null }[]).map(
-      (p) => p.topic || p.title,
-    );
+    type PostRow = { title: string; topic: string | null; summary: string | null };
+    const posts = (recentPosts ?? []) as PostRow[];
+    const publishedTitles = posts.map((p) => p.title);
     const seenTopics = ((recentTopics ?? []) as { topic: string }[]).map((t) => t.topic);
-    const remoteMemory = await breethRecall(`agent:${agent.id}`, agent.domain);
-    const memory = [...new Set([...publishedTopics, ...remoteMemory.map((m) => m.topic)])].slice(0, 30);
+
+    // Search Breeth for previously published topics and relevant memories.
+    const breethQuery = [agent.domain, ...candidates.slice(0, 8).map((c) => c.topic)].join(" ");
+    const remoteMemory = breethConfigured() ? await breethRecall(`agent:${agent.id}`, breethQuery) : [];
+    const memorySource = remoteMemory.length ? "breeth" : "database";
+
+    const memoryMap = new Map<string, { topic: string; note?: string | null }>();
+    for (const m of remoteMemory) {
+      memoryMap.set(m.topic.toLowerCase(), {
+        topic: m.topic,
+        note: [m.summary, m.insights?.join("; "), m.rationale].filter(Boolean).join(" — ") || null,
+      });
+    }
+    for (const p of posts) {
+      const topic = p.topic || p.title;
+      if (!memoryMap.has(topic.toLowerCase())) memoryMap.set(topic.toLowerCase(), { topic, note: p.summary });
+    }
+    const memory = [...memoryMap.values()].slice(0, 30);
+    const memoryTopics = memory.map((m) => m.topic);
 
     // 3. Local deterministic duplicate screening before the model is consulted.
     const decisions: (Decision & { candidate: Candidate })[] = [];
     const fresh: Candidate[] = [];
     for (const c of candidates) {
-      const dupOf = [...memory, ...seenTopics].find((m) => similarity(c.topic, m) >= 0.6);
+      const dupOf = [...memoryTopics, ...seenTopics].find((m) => similarity(c.topic, m) >= 0.6);
       if (dupOf) {
         decisions.push({
           index: -1,
@@ -341,6 +355,7 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
     // 4. EDITORIAL JUDGEMENT on what remains.
     if (fresh.length) {
       const reviewed = await editorialReview(agent, fresh, memory);
+
       for (let i = 0; i < fresh.length; i++) {
         const d = reviewed.find((r) => r.index === i);
         decisions.push({
