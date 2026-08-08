@@ -546,6 +546,7 @@ export async function memoryDryRun(seedTopic?: string) {
     agentId: agent.id,
     breethConfigured: breethConfigured(),
     candidates: candidates.length,
+    candidateSample: candidates.slice(0, 5).map((c) => c.topic),
     memoriesRecalled: remote.length,
     memorySample: remote.slice(0, 8).map((m) => m.topic),
     duplicatesBlockedByMemory: duplicates,
