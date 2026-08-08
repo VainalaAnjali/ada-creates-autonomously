@@ -15,6 +15,7 @@ import { Route as ApiAgentInitRouteImport } from './routes/api/agent/init'
 import { Route as ApiPublicAgentFeedRouteImport } from './routes/api/public/agent/feed'
 import { Route as ApiPublicAgentInitRouteImport } from './routes/api/public/agent/init'
 import { Route as ApiPublicHooksAgentTickRouteImport } from './routes/api/public/hooks/agent-tick'
+import { Route as ApiPublicHooksBreethCheckRouteImport } from './routes/api/public/hooks/breeth-check'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -46,6 +47,12 @@ const ApiPublicHooksAgentTickRoute = ApiPublicHooksAgentTickRouteImport.update({
   path: '/api/public/hooks/agent-tick',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicHooksBreethCheckRoute =
+  ApiPublicHooksBreethCheckRouteImport.update({
+    id: '/api/public/hooks/breeth-check',
+    path: '/api/public/hooks/breeth-check',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -54,6 +61,7 @@ export interface FileRoutesByFullPath {
   '/api/public/agent/feed': typeof ApiPublicAgentFeedRoute
   '/api/public/agent/init': typeof ApiPublicAgentInitRoute
   '/api/public/hooks/agent-tick': typeof ApiPublicHooksAgentTickRoute
+  '/api/public/hooks/breeth-check': typeof ApiPublicHooksBreethCheckRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -62,6 +70,7 @@ export interface FileRoutesByTo {
   '/api/public/agent/feed': typeof ApiPublicAgentFeedRoute
   '/api/public/agent/init': typeof ApiPublicAgentInitRoute
   '/api/public/hooks/agent-tick': typeof ApiPublicHooksAgentTickRoute
+  '/api/public/hooks/breeth-check': typeof ApiPublicHooksBreethCheckRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -71,6 +80,7 @@ export interface FileRoutesById {
   '/api/public/agent/feed': typeof ApiPublicAgentFeedRoute
   '/api/public/agent/init': typeof ApiPublicAgentInitRoute
   '/api/public/hooks/agent-tick': typeof ApiPublicHooksAgentTickRoute
+  '/api/public/hooks/breeth-check': typeof ApiPublicHooksBreethCheckRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -81,6 +91,7 @@ export interface FileRouteTypes {
     | '/api/public/agent/feed'
     | '/api/public/agent/init'
     | '/api/public/hooks/agent-tick'
+    | '/api/public/hooks/breeth-check'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -89,6 +100,7 @@ export interface FileRouteTypes {
     | '/api/public/agent/feed'
     | '/api/public/agent/init'
     | '/api/public/hooks/agent-tick'
+    | '/api/public/hooks/breeth-check'
   id:
     | '__root__'
     | '/'
@@ -97,6 +109,7 @@ export interface FileRouteTypes {
     | '/api/public/agent/feed'
     | '/api/public/agent/init'
     | '/api/public/hooks/agent-tick'
+    | '/api/public/hooks/breeth-check'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -106,6 +119,7 @@ export interface RootRouteChildren {
   ApiPublicAgentFeedRoute: typeof ApiPublicAgentFeedRoute
   ApiPublicAgentInitRoute: typeof ApiPublicAgentInitRoute
   ApiPublicHooksAgentTickRoute: typeof ApiPublicHooksAgentTickRoute
+  ApiPublicHooksBreethCheckRoute: typeof ApiPublicHooksBreethCheckRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -152,6 +166,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiPublicHooksAgentTickRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/hooks/breeth-check': {
+      id: '/api/public/hooks/breeth-check'
+      path: '/api/public/hooks/breeth-check'
+      fullPath: '/api/public/hooks/breeth-check'
+      preLoaderRoute: typeof ApiPublicHooksBreethCheckRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -162,6 +183,7 @@ const rootRouteChildren: RootRouteChildren = {
   ApiPublicAgentFeedRoute: ApiPublicAgentFeedRoute,
   ApiPublicAgentInitRoute: ApiPublicAgentInitRoute,
   ApiPublicHooksAgentTickRoute: ApiPublicHooksAgentTickRoute,
+  ApiPublicHooksBreethCheckRoute: ApiPublicHooksBreethCheckRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

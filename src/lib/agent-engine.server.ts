@@ -138,23 +138,25 @@ type Decision = {
 async function editorialReview(
   agent: AgentRow,
   candidates: Candidate[],
-  memory: string[],
+  memory: { topic: string; note?: string | null }[],
 ): Promise<Decision[]> {
   const model = (agent.config?.["model"] as string) ?? ADA_CONFIG.model;
   const system = `${agent.persona}\nYou are acting as a strict editor-in-chief for the domain "${agent.domain}". Reply with JSON only.`;
   const user = `Evaluate these candidate topics for publication.
 
-Already covered by Ada (do not repeat these):
-${memory.length ? memory.map((m) => `- ${m}`).join("\n") : "- (nothing yet)"}
+Long-term memory — topics Ada already covered, with what she already said (do not repeat these):
+${memory.length ? memory.map((m) => `- ${m.topic}${m.note ? ` — ${String(m.note).slice(0, 200)}` : ""}`).join("\n") : "- (nothing yet)"}
 
 Candidates:
 ${candidates.map((c, i) => `${i}. ${c.topic}\n   source: ${c.url}\n   notes: ${c.summary.slice(0, 200) || "(none)"}`).join("\n")}
 
 Rejection criteria: ${EDITORIAL_RULES.join("; ")}.
 Be strict: reject anything duplicate, weak-sourced, unoriginal, off-domain, clickbaity or without a meaningful insight.
+A candidate that only restates something in long-term memory MUST be rejected as "duplicate", even if worded differently. Only allow it when it adds a genuinely new development.
 
 Return JSON: {"decisions":[{"index":number,"score":0-100,"decision":"approved"|"rejected","reason":"one short sentence, starting with the criterion key when rejected"}]}
 Every candidate must appear exactly once.`;
+
 
   const raw = await callAI(model, system, user);
   const parsed = JSON.parse(raw) as { decisions?: Decision[] };
@@ -176,8 +178,10 @@ type GeneratedPost = {
   rationale: string;
   topic: string;
   tags: string[];
+  insights: string[];
   sources: { title: string; url: string }[];
 };
+
 
 /** GENERATE + RATIONALE for the selected topic. */
 async function generatePost(
@@ -204,6 +208,7 @@ Return a JSON object with exactly these keys:
 "rationale" (3-4 sentences: why THIS topic was selected over the alternatives, and why it is relevant right now),
 "topic" (short topic label),
 "tags" (array of 3-5 lowercase tags),
+"insights" (array of 2-4 short standalone factual takeaways worth remembering long-term),
 "sources" (array of 2-4 objects with "title" and "url"; the primary source above MUST be included, other URLs must be real and stable).`;
 
   const raw = await callAI(model, system, user);
@@ -227,9 +232,11 @@ Return a JSON object with exactly these keys:
     rationale: String(parsed.rationale ?? reason),
     topic: String(parsed.topic ?? candidate.topic).slice(0, 200),
     tags: Array.isArray(parsed.tags) ? parsed.tags.map(String).slice(0, 6) : [],
+    insights: Array.isArray(parsed.insights) ? parsed.insights.map(String).slice(0, 6) : [],
     sources: sources.slice(0, 5),
   };
 }
+
 
 /** Runs one autonomous cycle for every agent whose schedule is due. */
 export async function runDueAgents(trigger: string) {
@@ -287,11 +294,11 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
     // 1. DISCOVER — live sources only. A failure here must never fabricate a post.
     const candidates = await discoverTopics();
 
-    // 2. MEMORY — database history is authoritative, Breeth is best-effort.
+    // 2. MEMORY — Breeth is the long-term memory, the database is authoritative fallback.
     const [{ data: recentPosts }, { data: recentTopics }] = await Promise.all([
       db
         .from("posts")
-        .select("title, topic, created_at")
+        .select("title, topic, summary, created_at")
         .eq("agent_id", agent.id)
         .order("created_at", { ascending: false })
         .limit(20),
@@ -303,21 +310,35 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
         .limit(60),
     ]);
 
-    const publishedTitles = ((recentPosts ?? []) as { title: string; topic: string | null }[]).map(
-      (p) => p.title,
-    );
-    const publishedTopics = ((recentPosts ?? []) as { title: string; topic: string | null }[]).map(
-      (p) => p.topic || p.title,
-    );
+    type PostRow = { title: string; topic: string | null; summary: string | null };
+    const posts = (recentPosts ?? []) as PostRow[];
+    const publishedTitles = posts.map((p) => p.title);
     const seenTopics = ((recentTopics ?? []) as { topic: string }[]).map((t) => t.topic);
-    const remoteMemory = await breethRecall(`agent:${agent.id}`, agent.domain);
-    const memory = [...new Set([...publishedTopics, ...remoteMemory.map((m) => m.topic)])].slice(0, 30);
+
+    // Search Breeth for previously published topics and relevant memories.
+    const breethQuery = [agent.domain, ...candidates.slice(0, 8).map((c) => c.topic)].join(" ");
+    const remoteMemory = breethConfigured() ? await breethRecall(`agent:${agent.id}`, breethQuery) : [];
+    const memorySource = remoteMemory.length ? "breeth" : "database";
+
+    const memoryMap = new Map<string, { topic: string; note?: string | null }>();
+    for (const m of remoteMemory) {
+      memoryMap.set(m.topic.toLowerCase(), {
+        topic: m.topic,
+        note: [m.summary, m.insights?.join("; "), m.rationale].filter(Boolean).join(" — ") || null,
+      });
+    }
+    for (const p of posts) {
+      const topic = p.topic || p.title;
+      if (!memoryMap.has(topic.toLowerCase())) memoryMap.set(topic.toLowerCase(), { topic, note: p.summary });
+    }
+    const memory = [...memoryMap.values()].slice(0, 30);
+    const memoryTopics = memory.map((m) => m.topic);
 
     // 3. Local deterministic duplicate screening before the model is consulted.
     const decisions: (Decision & { candidate: Candidate })[] = [];
     const fresh: Candidate[] = [];
     for (const c of candidates) {
-      const dupOf = [...memory, ...seenTopics].find((m) => similarity(c.topic, m) >= 0.6);
+      const dupOf = [...memoryTopics, ...seenTopics].find((m) => similarity(c.topic, m) >= 0.6);
       if (dupOf) {
         decisions.push({
           index: -1,
@@ -334,6 +355,7 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
     // 4. EDITORIAL JUDGEMENT on what remains.
     if (fresh.length) {
       const reviewed = await editorialReview(agent, fresh, memory);
+
       for (let i = 0; i < fresh.length; i++) {
         const d = reviewed.find((r) => r.index === i);
         decisions.push({
@@ -412,22 +434,26 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
       );
     }
 
-    // 9. MEMORY UPDATE.
+    // 9. MEMORY UPDATE — topic, key facts, decision and rationale go to Breeth.
     const remembered = await breethRemember(`agent:${agent.id}`, {
       topic: generated.topic,
       summary: generated.summary,
-      rationale: generated.rationale,
+      insights: generated.insights.length ? generated.insights : [generated.summary].filter(Boolean),
+      decision: `approved (score ${winner.score})`,
+      rationale: `${winner.reason} — ${generated.rationale}`,
       sources: generated.sources.map((s) => s.url),
       postId: post.id as string,
+      publishedAt: new Date().toISOString(),
     });
 
     await log(
       "published",
-      `Published "${generated.title}" (score ${winner.score}, ${decisions.length - 1} candidates rejected)${
-        breethConfigured() ? (remembered ? ", memory synced" : ", memory sync failed — using database history") : ""
+      `Published "${generated.title}" (score ${winner.score}, ${decisions.length - 1} candidates rejected, memory: ${memorySource})${
+        breethConfigured() ? (remembered ? ", Breeth updated" : ", Breeth write failed — database fallback in use") : ""
       }`,
       post.id as string,
     );
+
     return "published";
   } catch (err) {
     await log("failed", err instanceof Error ? err.message : "Unknown error");

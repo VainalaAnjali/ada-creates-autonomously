@@ -1,80 +1,211 @@
 /**
- * Memory layer for the autonomous agent.
+ * Long-term memory layer for the autonomous agent.
  *
- * Primary store is always the project database (durable, insert-only history).
- * If an external memory service ("Breeth") is configured through the
- * BREETH_API_URL / BREETH_API_KEY server secrets, it is used as an additional
- * recall + write-through layer. Any failure there is logged and ignored: the
- * database history is the fallback for duplicate detection.
+ * Breeth (BREETH_API_URL + BREETH_API_KEY, server-side only) is Ada's
+ * persistent long-term memory. The project database stays the operational
+ * persistence layer and the fallback whenever Breeth is unreachable.
+ *
+ * Neither secret is ever imported into client code: this module is a
+ * `.server.ts` file and is only reached from server handlers.
  */
 
 export type MemoryItem = {
   topic: string;
   summary?: string | null;
+  insights?: string[];
+  rationale?: string | null;
   createdAt?: string | null;
   source: "database" | "breeth";
+};
+
+export type MemoryEntry = {
+  topic: string;
+  summary?: string;
+  insights?: string[];
+  decision?: string;
+  rationale?: string;
+  sources?: string[];
+  postId?: string;
+  publishedAt?: string;
 };
 
 function breethConfig() {
   const url = process.env["BREETH_API_URL"];
   const key = process.env["BREETH_API_KEY"];
   if (!url || !key) return null;
-  return { url: url.replace(/\/$/, ""), key };
-}
-
-export async function breethRecall(namespace: string, query: string): Promise<MemoryItem[]> {
-  const cfg = breethConfig();
-  if (!cfg) return [];
-  try {
-    const res = await fetch(`${cfg.url}/recall`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.key}` },
-      body: JSON.stringify({ namespace, query, limit: 25 }),
-    });
-    if (!res.ok) {
-      console.error(`Breeth recall failed [${res.status}]: ${await res.text()}`);
-      return [];
-    }
-    const body = (await res.json()) as { items?: { topic?: string; summary?: string; created_at?: string }[] };
-    return (body.items ?? [])
-      .filter((i) => i.topic)
-      .map((i) => ({
-        topic: String(i.topic),
-        summary: i.summary ?? null,
-        createdAt: i.created_at ?? null,
-        source: "breeth" as const,
-      }));
-  } catch (err) {
-    console.error("Breeth recall error:", err instanceof Error ? err.message : err);
-    return [];
-  }
-}
-
-export async function breethRemember(
-  namespace: string,
-  entry: { topic: string; summary?: string; rationale?: string; sources?: string[]; postId?: string },
-): Promise<boolean> {
-  const cfg = breethConfig();
-  if (!cfg) return false;
-  try {
-    const res = await fetch(`${cfg.url}/remember`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfg.key}` },
-      body: JSON.stringify({ namespace, ...entry }),
-    });
-    if (!res.ok) {
-      console.error(`Breeth remember failed [${res.status}]: ${await res.text()}`);
-      return false;
-    }
-    return true;
-  } catch (err) {
-    console.error("Breeth remember error:", err instanceof Error ? err.message : err);
-    return false;
-  }
+  return { url: url.replace(/\/+$/, ""), key };
 }
 
 export function breethConfigured() {
   return breethConfig() !== null;
+}
+
+async function breethFetch(
+  path: string,
+  body: unknown,
+  cfg: { url: string; key: string },
+): Promise<{ ok: boolean; status: number; json: unknown; text: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12_000);
+  try {
+    const res = await fetch(`${cfg.url}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${cfg.key}`,
+        "X-API-Key": cfg.key,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    let parsed: unknown = null;
+    try {
+      parsed = text ? JSON.parse(text) : null;
+    } catch {
+      /* non-JSON response */
+    }
+    return { ok: res.ok, status: res.status, json: parsed, text };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function normalizeItems(payload: unknown): MemoryItem[] {
+  const root = payload as Record<string, unknown> | null;
+  const rawList =
+    (Array.isArray(root?.["items"]) && root["items"]) ||
+    (Array.isArray(root?.["memories"]) && root["memories"]) ||
+    (Array.isArray(root?.["results"]) && root["results"]) ||
+    (Array.isArray(root?.["data"]) && root["data"]) ||
+    (Array.isArray(payload) ? payload : []);
+
+  return (rawList as Record<string, unknown>[])
+    .map((i) => {
+      const meta = (i?.["metadata"] as Record<string, unknown>) ?? {};
+      const topic =
+        (i?.["topic"] as string) ??
+        (meta["topic"] as string) ??
+        (i?.["title"] as string) ??
+        (typeof i?.["content"] === "string" ? (i["content"] as string).slice(0, 160) : "") ??
+        (typeof i?.["text"] === "string" ? (i["text"] as string).slice(0, 160) : "");
+      const insights = i?.["insights"] ?? meta["insights"];
+      return {
+        topic: String(topic ?? "").trim(),
+        summary: (i?.["summary"] as string) ?? (meta["summary"] as string) ?? null,
+        insights: Array.isArray(insights) ? insights.map(String).slice(0, 8) : [],
+        rationale: (i?.["rationale"] as string) ?? (meta["rationale"] as string) ?? null,
+        createdAt:
+          (i?.["created_at"] as string) ??
+          (i?.["createdAt"] as string) ??
+          (meta["published_at"] as string) ??
+          null,
+        source: "breeth" as const,
+      };
+    })
+    .filter((i) => i.topic.length > 0);
+}
+
+/** Search Breeth for previously published topics and relevant memories. */
+export async function breethRecall(namespace: string, query: string): Promise<MemoryItem[]> {
+  const cfg = breethConfig();
+  if (!cfg) return [];
+
+  const payload = { namespace, query, limit: 25, top_k: 25 };
+  for (const path of ["/recall", "/search", "/memories/search", "/v1/memories/search"]) {
+    try {
+      const res = await breethFetch(path, payload, cfg);
+      if (res.ok) {
+        const items = normalizeItems(res.json);
+        if (items.length || path === "/recall") return items;
+        continue;
+      }
+      if (res.status === 404 || res.status === 405) continue; // try next shape
+      console.error(`Breeth recall failed [${res.status}] on ${path}: ${res.text.slice(0, 300)}`);
+      return [];
+    } catch (err) {
+      console.error("Breeth recall error:", err instanceof Error ? err.message : err);
+      return [];
+    }
+  }
+  return [];
+}
+
+/** Persist the published topic, insights, decision and rationale into Breeth. */
+export async function breethRemember(namespace: string, entry: MemoryEntry): Promise<boolean> {
+  const cfg = breethConfig();
+  if (!cfg) return false;
+
+  const publishedAt = entry.publishedAt ?? new Date().toISOString();
+  const content = [
+    `Topic: ${entry.topic}`,
+    entry.summary ? `Summary: ${entry.summary}` : "",
+    entry.insights?.length ? `Key facts: ${entry.insights.join(" | ")}` : "",
+    entry.decision ? `Editorial decision: ${entry.decision}` : "",
+    entry.rationale ? `Rationale: ${entry.rationale}` : "",
+    entry.sources?.length ? `Sources: ${entry.sources.join(" ")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const payload = {
+    namespace,
+    topic: entry.topic,
+    summary: entry.summary ?? null,
+    insights: entry.insights ?? [],
+    decision: entry.decision ?? "published",
+    rationale: entry.rationale ?? null,
+    sources: entry.sources ?? [],
+    post_id: entry.postId ?? null,
+    published_at: publishedAt,
+    content,
+    text: content,
+    metadata: {
+      topic: entry.topic,
+      summary: entry.summary ?? null,
+      insights: entry.insights ?? [],
+      decision: entry.decision ?? "published",
+      rationale: entry.rationale ?? null,
+      sources: entry.sources ?? [],
+      post_id: entry.postId ?? null,
+      published_at: publishedAt,
+    },
+  };
+
+  for (const path of ["/remember", "/memories", "/v1/memories", "/store"]) {
+    try {
+      const res = await breethFetch(path, payload, cfg);
+      if (res.ok) return true;
+      if (res.status === 404 || res.status === 405) continue;
+      console.error(`Breeth remember failed [${res.status}] on ${path}: ${res.text.slice(0, 300)}`);
+      return false;
+    } catch (err) {
+      console.error("Breeth remember error:", err instanceof Error ? err.message : err);
+      return false;
+    }
+  }
+  return false;
+}
+
+/** Connectivity probe used by the diagnostics endpoint. Never returns secrets. */
+export async function breethHealth(namespace = "diagnostics") {
+  const cfg = breethConfig();
+  if (!cfg) return { configured: false, read: false, write: false, note: "BREETH_API_URL / BREETH_API_KEY not set" };
+  const probe = `breeth connectivity probe ${new Date().toISOString()}`;
+  const write = await breethRemember(namespace, {
+    topic: probe,
+    summary: "Connectivity probe written by Ada's memory layer.",
+    insights: ["probe"],
+    decision: "probe",
+    rationale: "Verifying Breeth write access.",
+  });
+  const items = await breethRecall(namespace, "breeth connectivity probe");
+  return {
+    configured: true,
+    write,
+    read: items.length > 0,
+    recalled: items.slice(0, 5).map((i) => i.topic),
+  };
 }
 
 /** Cheap lexical similarity used for local duplicate detection. */
