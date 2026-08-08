@@ -505,3 +505,49 @@ export async function getFeed(agentId?: string, limit = 20) {
 
   return { agent, posts: posts ?? [], runs: runs ?? [], rejected: rejected ?? [] };
 }
+
+/**
+ * Diagnostics only: exercises DISCOVER -> BREETH RECALL -> duplicate screening
+ * without calling the AI or writing anything. Never affects the scheduler.
+ */
+export async function memoryDryRun(seedTopic?: string) {
+  const db = getServiceClient();
+  const { data: agentRow } = await db
+    .from("agents")
+    .select("*")
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  const agent = agentRow as AgentRow | null;
+  if (!agent) return { error: "no agent" };
+
+  const namespace = `agent:${agent.id}`;
+  if (seedTopic) {
+    await breethRemember(namespace, {
+      topic: seedTopic,
+      summary: `Ada already published about ${seedTopic}.`,
+      insights: [`${seedTopic} was covered in an earlier autonomous cycle.`],
+      decision: "approved (seeded diagnostic)",
+      rationale: "Seeded to verify that memory from one cycle influences a later cycle.",
+    });
+  }
+
+  const candidates = await discoverTopics();
+  const query = [agent.domain, seedTopic ?? "", ...candidates.slice(0, 8).map((c) => c.topic)].join(" ");
+  const remote = await breethRecall(namespace, query);
+  const duplicates = candidates
+    .map((c) => {
+      const hit = remote.find((m) => similarity(c.topic, m.topic) >= 0.6);
+      return hit ? { candidate: c.topic, memory: hit.topic } : null;
+    })
+    .filter(Boolean);
+
+  return {
+    agentId: agent.id,
+    breethConfigured: breethConfigured(),
+    candidates: candidates.length,
+    memoriesRecalled: remote.length,
+    memorySample: remote.slice(0, 8).map((m) => m.topic),
+    duplicatesBlockedByMemory: duplicates,
+  };
+}
