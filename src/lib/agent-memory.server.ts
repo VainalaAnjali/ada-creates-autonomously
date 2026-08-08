@@ -194,3 +194,33 @@ export function similarity(a: string, b: string): number {
   for (const t of ta) if (tb.has(t)) shared += 1;
   return shared / Math.min(ta.size, tb.size);
 }
+
+/**
+ * Targeted recall: one Breeth search per candidate topic, run in parallel.
+ * This is what makes memory from an earlier cycle actually bite on a later one.
+ */
+export async function breethRecallMany(
+  namespace: string,
+  queries: string[],
+): Promise<Map<string, MemoryItem[]>> {
+  const out = new Map<string, MemoryItem[]>();
+  if (!breethConfigured()) return out;
+  const unique = [...new Set(queries.filter(Boolean))].slice(0, 12);
+  const results = await Promise.all(unique.map((q) => breethRecall(namespace, q)));
+  unique.forEach((q, i) => out.set(q, results[i] ?? []));
+  return out;
+}
+
+/** True when a Breeth memory clearly covers this topic already. */
+export function memoryCovers(topic: string, memories: MemoryItem[]): MemoryItem | null {
+  const t = tokenize(topic);
+  if (!t.size) return null;
+  for (const m of memories) {
+    if (similarity(topic, m.topic) >= 0.6) return m;
+    const mt = tokenize(m.topic);
+    let shared = 0;
+    for (const w of t) if (mt.has(w)) shared += 1;
+    if (t.size >= 3 && shared / t.size >= 0.7) return m; // memory restates the topic
+  }
+  return null;
+}
