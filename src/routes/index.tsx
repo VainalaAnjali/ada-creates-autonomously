@@ -147,6 +147,18 @@ function Dashboard() {
             researches, decides and publishes on her own schedule — no human in the loop.
           </p>
 
+          {data?.aiStatus === "credits_exhausted" && (
+            <div
+              role="status"
+              className="mt-6 max-w-2xl rounded-lg border border-accent/40 bg-accent/10 px-4 py-3 text-sm text-foreground/90"
+            >
+              {data.statusMessage ??
+                "Ada is running — AI generation is temporarily paused because AI credits are exhausted. The scheduler and memory are still active."}
+            </div>
+          )}
+
+
+
           <div className="mt-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Stat label="Status" value={agent?.status ?? (isLoading ? "…" : "not initialized")} />
             <Stat label="Posts published" value={posts.length} />
