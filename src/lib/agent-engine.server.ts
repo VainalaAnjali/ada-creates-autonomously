@@ -101,7 +101,16 @@ export async function initAgent(overrides?: Partial<typeof ADA_CONFIG>) {
   return { agent: data as AgentRow, created: true };
 }
 
+/** Raised when the AI Gateway reports exhausted credits (HTTP 402). */
+export class AiCreditsExhaustedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AiCreditsExhaustedError";
+  }
+}
+
 async function callAI(model: string, system: string, user: string): Promise<string> {
+
   const apiKey = process.env["LOVABLE_API_KEY"];
   if (!apiKey) throw new Error("AI credentials are not configured");
 
