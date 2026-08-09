@@ -56,8 +56,15 @@ export async function handleAgentFeed(request: Request): Promise<Response> {
     if (!feed) return json({ success: false, error: "Agent not found. Call /api/agent/init first." }, 404);
 
     const { agent, posts, runs, rejected } = feed;
+    const lastRunStatus = runs[0]?.["status"] as string | undefined;
+    const aiCreditsExhausted = lastRunStatus === "ai_credit_exhausted";
     return json({
       success: true,
+      aiStatus: aiCreditsExhausted ? "credits_exhausted" : "ok",
+      statusMessage: aiCreditsExhausted
+        ? "Ada is running — AI generation is temporarily paused because AI credits are exhausted. The scheduler and memory are still active."
+        : null,
+
       agent: {
         id: agent.id,
         name: agent.name,
