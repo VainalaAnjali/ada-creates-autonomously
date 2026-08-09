@@ -483,9 +483,19 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
 
     return "published";
   } catch (err) {
+    // AI credit exhaustion is not a cycle failure: no post is fabricated, the
+    // attempt is recorded, and the scheduler stays armed for the next cycle.
+    if (err instanceof AiCreditsExhaustedError) {
+      await log(
+        "ai_credit_exhausted",
+        "AI generation paused — the AI Gateway reported exhausted credits (HTTP 402). Discovery, memory and scheduling are still running; no post was fabricated.",
+      );
+      return "ai_credit_exhausted";
+    }
     await log("failed", err instanceof Error ? err.message : "Unknown error");
     return "failed";
   }
+
 }
 
 /** READ-ONLY feed. Never triggers generation. */
