@@ -101,7 +101,16 @@ export async function initAgent(overrides?: Partial<typeof ADA_CONFIG>) {
   return { agent: data as AgentRow, created: true };
 }
 
+/** Raised when the AI Gateway reports exhausted credits (HTTP 402). */
+export class AiCreditsExhaustedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AiCreditsExhaustedError";
+  }
+}
+
 async function callAI(model: string, system: string, user: string): Promise<string> {
+
   const apiKey = process.env["LOVABLE_API_KEY"];
   if (!apiKey) throw new Error("AI credentials are not configured");
 
@@ -124,8 +133,12 @@ async function callAI(model: string, system: string, user: string): Promise<stri
 
   if (!res.ok) {
     const body = await res.text();
+    if (res.status === 402) {
+      throw new AiCreditsExhaustedError(`AI request failed [402]: ${body.slice(0, 300)}`);
+    }
     throw new Error(`AI request failed [${res.status}]: ${body}`);
   }
+
   const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
   const text = json.choices?.[0]?.message?.content ?? "";
   return text.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
@@ -470,9 +483,19 @@ export async function runAgentOnce(agent: AgentRow, trigger: string): Promise<st
 
     return "published";
   } catch (err) {
+    // AI credit exhaustion is not a cycle failure: no post is fabricated, the
+    // attempt is recorded, and the scheduler stays armed for the next cycle.
+    if (err instanceof AiCreditsExhaustedError) {
+      await log(
+        "ai_credit_exhausted",
+        "AI generation paused — the AI Gateway reported exhausted credits (HTTP 402). Discovery, memory and scheduling are still running; no post was fabricated.",
+      );
+      return "ai_credit_exhausted";
+    }
     await log("failed", err instanceof Error ? err.message : "Unknown error");
     return "failed";
   }
+
 }
 
 /** READ-ONLY feed. Never triggers generation. */
