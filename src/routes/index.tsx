@@ -61,8 +61,10 @@ type Rejection = {
 
 type Feed = {
   success: boolean;
+  aiStatus?: "ok" | "credits_exhausted";
+  statusMessage?: string | null;
   agent?: {
-    id: string;
+
     name: string;
     domain: string;
     status: string;
