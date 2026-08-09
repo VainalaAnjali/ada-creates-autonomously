@@ -64,8 +64,9 @@ type Feed = {
   aiStatus?: "ok" | "credits_exhausted";
   statusMessage?: string | null;
   agent?: {
-
+    id: string;
     name: string;
+
     domain: string;
     status: string;
     autonomous: boolean;
