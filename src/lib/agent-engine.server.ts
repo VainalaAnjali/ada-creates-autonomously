@@ -124,8 +124,12 @@ async function callAI(model: string, system: string, user: string): Promise<stri
 
   if (!res.ok) {
     const body = await res.text();
+    if (res.status === 402) {
+      throw new AiCreditsExhaustedError(`AI request failed [402]: ${body.slice(0, 300)}`);
+    }
     throw new Error(`AI request failed [${res.status}]: ${body}`);
   }
+
   const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
   const text = json.choices?.[0]?.message?.content ?? "";
   return text.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
